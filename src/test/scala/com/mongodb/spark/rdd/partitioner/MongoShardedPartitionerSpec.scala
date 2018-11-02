@@ -22,6 +22,7 @@ import com.mongodb.spark.{MongoConnector, RequiresMongoDB}
 
 import org.scalatest.prop.PropertyChecks
 
+//noinspection ScalaStyle
 class MongoShardedPartitionerSpec extends RequiresMongoDB with PropertyChecks {
   private val pipeline = Array.empty[BsonDocument]
 
@@ -98,9 +99,9 @@ class MongoShardedPartitionerSpec extends RequiresMongoDB with PropertyChecks {
 
       val chunks: Seq[BsonDocument] =
         """ { _id: "a", shard: "tic", min: { _id: { "$minKey" : 1 } }, max: { _id: { "$numberLong" : "0" } } }
-        |{ _id: "b", shard: "tac", min: { _id: { "$numberLong" : "0" } } , max: { _id : { "$numberLong" : "500000000000" } } }
-        |{ _id: "c", shard: "toe", min: { _id: { "$numberLong" : "500000000000" } }, "max" : { "_id" : { "$maxKey" : 1 } } }
-    """.trim.stripMargin.split("[\\r\\n]+").map(BsonDocument.parse)
+          |{ _id: "b", shard: "tac", min: { _id: { "$numberLong" : "0" } } , max: { _id : { "$numberLong" : "500000000000" } } }
+          |{ _id: "c", shard: "toe", min: { _id: { "$numberLong" : "500000000000" } }, "max" : { "_id" : { "$maxKey" : 1 } } }
+        """.trim.stripMargin.split("[\\r\\n]+").map(BsonDocument.parse)
 
       val expectedPartitions = Array(
         MongoPartition(
@@ -120,6 +121,48 @@ class MongoShardedPartitionerSpec extends RequiresMongoDB with PropertyChecks {
         )
       )
       MongoShardedPartitioner.generatePartitions(chunks, "_id", shardMap) should be(expectedPartitions)
+    }
+  }
+
+  it should "calculate the expected Partitions with reductions" in {
+    forAll(shardsMaps) { (shardMap: Map[String, Seq[String]]) =>
+
+      val chunks: Seq[BsonDocument] =
+        """ { _id: "a", shard: "sa", min: { _id: { "$minKey" : 1 } }, max: { _id: { "$numberLong" : "0" } } }
+          |{ _id: "b", shard: "sb", min: { _id: { "$numberLong" : "0" } } , max: { _id : { "$numberLong" : "100000000000" } } }
+          |{ _id: "c", shard: "sc", min: { _id: { "$numberLong" : "100000000000" } } , max: { _id : { "$numberLong" : "200000000000" } } }
+          |{ _id: "d", shard: "sd", min: { _id: { "$numberLong" : "200000000000" } } , max: { _id : { "$numberLong" : "300000000000" } } }
+          |{ _id: "e", shard: "se", min: { _id: { "$numberLong" : "300000000000" } } , max: { _id : { "$numberLong" : "400000000000" } } }
+          |{ _id: "f", shard: "sf", min: { _id: { "$numberLong" : "400000000000" } } , max: { _id : { "$numberLong" : "500000000000" } } }
+          |{ _id: "g", shard: "sg", min: { _id: { "$numberLong" : "500000000000" } } , max: { _id : { "$numberLong" : "600000000000" } } }
+          |{ _id: "h", shard: "sh", min: { _id: { "$numberLong" : "600000000000" } } , max: { _id : { "$numberLong" : "700000000000" } } }
+          |{ _id: "i", shard: "si", min: { _id: { "$numberLong" : "700000000000" } } , max: { _id : { "$numberLong" : "800000000000" } } }
+          |{ _id: "j", shard: "sj", min: { _id: { "$numberLong" : "800000000000" } }, "max" : { "_id" : { "$maxKey" : 1 } } }
+        """.trim.stripMargin.split("[\\r\\n]+").map(BsonDocument.parse)
+
+      val expectedPartitions = Array(
+        MongoPartition(
+          0,
+          BsonDocument.parse("""{_id: {$lt: { "$numberLong" : "200000000000" } } } }"""),
+          shardMap.getOrElse("sa", Nil)
+        ),
+        MongoPartition(
+          1,
+          BsonDocument.parse("""{_id: {$gte: { "$numberLong" : "200000000000" }, $lt: { "$numberLong" : "500000000000" } } } }"""),
+          shardMap.getOrElse("sb", Nil)
+        ),
+        MongoPartition(
+          2,
+          BsonDocument.parse("""{_id: {$gte: { "$numberLong" : "500000000000" }, $lt: { "$numberLong" : "800000000000" } } } }"""),
+          shardMap.getOrElse("sc", Nil)
+        ),
+        MongoPartition(
+          3,
+          BsonDocument.parse("""{_id: {$gte: { "$numberLong" : "800000000000" } } } }"""),
+          shardMap.getOrElse("sj", Nil)
+        )
+      )
+      MongoShardedPartitioner.generatePartitions(chunks, "_id", shardMap, 4) should be(expectedPartitions)
     }
   }
 

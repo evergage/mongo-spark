@@ -74,25 +74,32 @@ class MongoShardedPartitioner extends MongoPartitioner {
     }
   }
 
-  private[partitioner] def generatePartitions(chunks: Seq[BsonDocument], shardKey: String, shardsMap: Map[String, Seq[String]]): Array[MongoPartition] = {
+  private[partitioner] def generatePartitions(chunks: Seq[BsonDocument], shardKey: String,
+                                              shardsMap: Map[String, Seq[String]], partitionLimit: Integer = -1): Array[MongoPartition] = {
     Try(BsonDocument.parse(shardKey)) match {
       case Success(shardKeyDocument) => generateCompoundKeyPartitions(chunks, shardKeyDocument, shardsMap)
-      case Failure(e)                => generateSingleKeyPartitions(chunks, shardKey, shardsMap)
+      case Failure(e)                => generateSingleKeyPartitions(chunks, shardKey, shardsMap, partitionLimit)
     }
   }
 
-  private[partitioner] def generateSingleKeyPartitions(chunks: Seq[BsonDocument], shardKey: String,
-                                                       shardsMap: Map[String, Seq[String]]): Array[MongoPartition] = {
-    chunks.zipWithIndex.map({
-      case (chunk: BsonDocument, i: Int) =>
+  private def generateSingleKeyPartitions(chunks: Seq[BsonDocument], shardKey: String,
+                                          shardsMap: Map[String, Seq[String]], partitionLimit: Integer) = {
+    var chunksPerPartition = 1
+
+    if (partitionLimit > 0 && partitionLimit < chunks.length) {
+      chunksPerPartition = math.ceil(1f * chunks.length / partitionLimit).toInt
+    }
+
+    chunks.grouped(chunksPerPartition).zipWithIndex.map({
+      case (chunkGroup: Seq[BsonDocument], i: Int) =>
         MongoPartition(
           i,
           PartitionerHelper.createBoundaryQuery(
             shardKey,
-            chunk.getDocument("min").get(shardKey),
-            chunk.getDocument("max").get(shardKey)
+            chunkGroup.head.getDocument("min").get(shardKey),
+            chunkGroup.last.getDocument("max").get(shardKey)
           ),
-          shardsMap.getOrElse(chunk.getString("shard").getValue, Nil)
+          shardsMap.getOrElse(chunkGroup.last.getString("shard").getValue, Nil)
         )
     }).toArray
   }
